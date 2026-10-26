@@ -32,10 +32,8 @@ const STATUS: Record<ReturnType<typeof billStatus>, { label: string; bg: RGB; fg
   cheque: { label: "CHEQUE PENDING", bg: [224, 242, 254], fg: [7, 89, 133] },
 };
 
-// The built-in PDF fonts only cover Latin characters.
 const SUPPORTED = /[\u0020-\u007E\u00A0-\u00FF\u2122\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026]/;
 
-/** Fetch the logo in the browser and read its size. */
 export async function loadLogo(url: string): Promise<Logo> {
   const blob = await (await fetch(url)).blob();
   const dataUrl = await new Promise<string>((res, rej) => {
@@ -76,7 +74,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
 
   const W = 210, H = 297, M = 14, CW = 182, R = M + CW;
   const FOOT = 11;
-  const LIMIT = H - FOOT - 16; // lowest y for content
+  const LIMIT = H - FOOT - 16;
 
   const fill = (c: RGB) => doc.setFillColor(c[0], c[1], c[2]);
   const ink = (c: RGB) => doc.setTextColor(c[0], c[1], c[2]);
@@ -86,7 +84,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
     doc.setFontSize(size);
     ink(color);
   };
-  /** text with letter-spacing; align left/right */
+
   const spaced = (s: string, x: number, y: number, cs: number, align: "left" | "right" | "center" = "left") => {
     const str = t(s);
     const w = doc.getTextWidth(str) + cs * Math.max(0, str.length - 1);
@@ -95,14 +93,12 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
     doc.setCharSpace(0);
     return w;
   };
-  const eyebrow = (s: string, x: number, y: number, align: "left" | "right" = "left") => {
-    font("bold", 7, C.gold);
-    spaced(s, x, y, 0.45, align);
+
+  /** Helper to draw clickable links */
+  const textWithLink = (text: string, x: number, y: number, url: string) => {
+    doc.textWithLink(t(text), x, y, { url });
   };
-
-  const GS = (doc as unknown as { GState: new (o: { opacity: number }) => never }).GState;
-  const opacity = (o: number) => doc.setGState(new GS({ opacity: o }));
-
+  
   const frameTop = () => {
     fill(C.brand);
     doc.rect(0, 0, W, 1.6, "F");
@@ -111,84 +107,97 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   // ---------- page 1 header ----------
   frameTop();
   let y = 15.6;
-  const logoW = 62;
-  const logoH = logo ? (logoW * logo.h) / logo.w : 28;
+  
+  // Logo
+  const logoW = 50;
+  const logoH = logo ? (logoW * logo.h) / logo.w : 25;
   if (logo) doc.addImage(logo.dataUrl, "PNG", M, y, logoW, logoH);
 
+  // INVOICE text
   font("normal", 24, C.brand);
-  spaced("INVOICE", R, y + logoH - 4, 2.2, "right");
+  spaced("INVOICE", R, y + logoH - 6, 2.2, "right");
 
-  y += logoH + 6;
-  // gold divider that fades out to the right
-  const segs = 40;
-  for (let i = 0; i < segs; i++) {
-    opacity(1 - i / segs);
-    stroke(C.gold);
-    doc.setLineWidth(0.3);
-    doc.line(M + (CW / segs) * i, y, M + (CW / segs) * (i + 1) + 0.2, y);
-  }
-  opacity(1);
+  y += Math.max(logoH, 25) + 8; 
+  
+  // Divider line
+  stroke(C.line);
+  doc.setLineWidth(0.3);
+  doc.line(M, y, R, y);
   y += 8;
 
-  // ---------- invoice details strip ----------
-  const stripH = 15.5;
-  const cell = CW / 3;
-  fill(C.zebra);
-  stroke(C.line);
-  doc.setLineWidth(0.25);
-  doc.roundedRect(M, y, CW, stripH, 2.5, 2.5, "FD");
-  doc.line(M + cell, y + 2.5, M + cell, y + stripH - 2.5);
-  doc.line(M + cell * 2, y + 2.5, M + cell * 2, y + stripH - 2.5);
+  // ---------- 3 Info Columns ----------
+  const colWidth = CW / 3;
+  
+  // Bill To
+  font("bold", 7, C.mute);
+  spaced("BILL TO", M, y, 0.45);
+  font("bold", 10, C.ink);
+  let by = y + 5;
+  doc.text(t(customer.name), M, by);
+  by += 4.5;
+  if (customer.address) {
+    font("normal", 8.5, C.text);
+    const lines = doc.splitTextToSize(t(`Address: ${customer.address}`), colWidth - 4);
+    doc.text(lines, M, by);
+    by += lines.length * 4;
+  }
+  if (customer.phone) {
+    font("normal", 8.5, C.text);
+    // Clickable tel:
+    textWithLink(`Tel: ${customer.phone}`, M, by, `tel:${customer.phone.replace(/\s/g, '')}`);
+  }
 
-  eyebrow("INVOICE NO", M + 5, y + 5.6);
-  font("bold", 9.5, C.ink);
-  doc.text(t(billNo(bill)), M + 5, y + 11.4);
-  eyebrow("INVOICE DATE", M + cell + 5, y + 5.6);
-  font("bold", 9.5, C.ink);
-  doc.text(t(bill.bill_date), M + cell + 5, y + 11.4);
-  eyebrow("STATUS", M + cell * 2 + 5, y + 5.6);
+  // From
+  font("bold", 7, C.mute);
+  spaced("FROM", M + colWidth, y, 0.45);
+  font("bold", 10, C.ink);
+  let fy = y + 5;
+  doc.text(t(brandName), M + colWidth, fy);
+  fy += 4.5;
+  font("normal", 8.5, C.text);
+  const fromLines = doc.splitTextToSize(t(`Address: ${SHOP.address}`), colWidth - 4);
+  doc.text(fromLines, M + colWidth, fy);
+  fy += fromLines.length * 4;
+  
+  // Clickable tel:
+  textWithLink(`Tel: ${SHOP.phone}`, M + colWidth, fy, `tel:${SHOP.phone.replace(/\s/g, '')}`);
+  fy += 4;
+  // Clickable web:
+  textWithLink(`${websiteLabel}`, M + colWidth, fy, SHOP.website);
+
+  // Invoice Details
+  font("bold", 7, C.mute);
+  spaced("INVOICE DETAILS", M + colWidth * 2, y, 0.45);
+  let dy = y + 5;
+  
+  // Invoice No
+  font("normal", 8.5, C.text);
+  doc.text("Invoice No :", M + colWidth * 2, dy);
+  font("bold", 7.5, C.ink); 
+  const invNoWidth = doc.getTextWidth(t(billNo(bill)));
+  doc.text(t(billNo(bill)), R - invNoWidth, dy);
+  dy += 5;
+
+  // Invoice Date
+  font("normal", 8.5, C.text);
+  doc.text("Invoice Date :", M + colWidth * 2, dy);
+  font("bold", 8.5, C.ink);
+  const dateWidth = doc.getTextWidth(t(bill.bill_date));
+  doc.text(t(bill.bill_date), R - dateWidth, dy);
+  dy += 5;
+
+  // Status
+  font("normal", 8.5, C.text);
+  doc.text("Status :", M + colWidth * 2, dy);
   font("bold", 7, status.fg);
   const stW = doc.getTextWidth(status.label) + 0.4 * status.label.length + 7;
   fill(status.bg);
-  doc.roundedRect(M + cell * 2 + 5, y + 7.4, stW, 5.4, 2.7, 2.7, "F");
+  doc.roundedRect(M + colWidth * 2 + 15, dy - 3.5, stW, 5.4, 2.7, 2.7, "F");
   doc.setCharSpace(0.4);
-  doc.text(status.label, M + cell * 2 + 5 + stW / 2 + 0.2, y + 11, { align: "center" });
+  doc.text(status.label, M + colWidth * 2 + 15 + stW / 2 + 0.2, dy, { align: "center" });
   doc.setCharSpace(0);
-  y += stripH + 6;
 
-  // ---------- billed to / from ----------
-  const PW = 87;
-  const partyTop = y;
-  const drawParty = (x: number, label: string, name: string, rows: [string, string][], bar: RGB) => {
-    eyebrow(label, x + 5, partyTop + 5.2);
-    font("bold", 11.5, C.ink);
-    const nl = doc.splitTextToSize(t(name), PW - 10) as string[];
-    doc.text(nl, x + 5, partyTop + 11.4);
-    let yy = partyTop + 11.4 + (nl.length - 1) * 4.8 + 5.4;
-    rows.forEach(([lab, val]) => {
-      font("bold", 6.5, C.mute);
-      doc.text(lab.toUpperCase(), x + 5, yy);
-      font("normal", 9, C.text);
-      const vl = doc.splitTextToSize(t(val), PW - 10 - 17) as string[];
-      doc.text(vl, x + 22, yy);
-      yy += vl.length * 4.4 + 1.2;
-    });
-    return { end: yy + 1.2, bar, x };
-  };
-  const billRows: [string, string][] = [];
-  if (customer.phone) billRows.push(["Tel", customer.phone]);
-  if (customer.address) billRows.push(["Address", customer.address]);
-  const boxL = drawParty(M, "BILLED TO", customer.name, billRows, C.gold);
-  const boxR = drawParty(R - PW, "FROM", brandName, [["Address", SHOP.address], ["Tel", SHOP.phone]], C.brand);
-  const partyEnd = Math.max(boxL.end, boxR.end, partyTop + 24);
-  [boxL, boxR].forEach((b) => {
-    stroke(C.line);
-    doc.setLineWidth(0.25);
-    doc.roundedRect(b.x, partyTop, PW, partyEnd - partyTop, 2, 2, "S");
-    fill(b.bar);
-    doc.rect(b.x, partyTop + 0.4, 0.9, partyEnd - partyTop - 0.8, "F");
-  });
-  y = partyEnd + 8;
+  y += 32;
 
   // ---------- items table ----------
   const X_DESC = M + 4, X_PRICE = 132, X_QTY = 154, X_AMT = R - 4;
@@ -206,7 +215,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
 
   items.forEach((it, n) => {
     font("normal", 9, C.ink);
-    const lines = doc.splitTextToSize(t(it.item_name), 88) as string[];
+    const lines = doc.splitTextToSize(t(it.item_name), 88);
     const rowH = Math.max(9.5, lines.length * 4.4 + 5);
     if (y + rowH > LIMIT) {
       doc.addPage();
@@ -249,7 +258,8 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
     y = 18;
   }
 
-  eyebrow("PAYMENT DETAILS", M, y);
+  font("bold", 7, C.gold);
+  spaced("PAYMENT DETAILS", M, y, 0.45);
   let py = y + 7;
   if (!payRows.length) {
     font("normal", 9, C.mute);

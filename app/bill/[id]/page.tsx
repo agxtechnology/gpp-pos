@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../../../lib/supabase";
@@ -58,6 +58,157 @@ function saveBlob(blob: Blob, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 15000);
 }
 
+function SlideToDelete({
+  onConfirm,
+  disabled = false,
+}: {
+  onConfirm: () => void;
+  disabled?: boolean;
+}) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const startX = useRef(0);
+  const startProgress = useRef(0);
+  const progressRef = useRef(0);
+  const draggingRef = useRef(false);
+
+  const [progress, setProgress] = useState(0);
+  const [maxTravel, setMaxTravel] = useState(280);
+
+  function updateProgress(value: number) {
+    const next = Math.max(0, Math.min(100, value));
+    progressRef.current = next;
+    setProgress(next);
+  }
+
+  useEffect(() => {
+    const measure = () => {
+      if (railRef.current) {
+        setMaxTravel(Math.max(0, railRef.current.clientWidth - 56));
+      }
+    };
+
+    measure();
+    window.addEventListener("resize", measure);
+
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  function handlePointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    if (disabled || maxTravel <= 0) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    startX.current = event.clientX;
+    startProgress.current = progressRef.current;
+    draggingRef.current = true;
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!draggingRef.current || disabled) return;
+
+    const distance = event.clientX - startX.current;
+    const change = (distance / maxTravel) * 100;
+
+    updateProgress(startProgress.current + change);
+  }
+
+  function handlePointerUp() {
+    if (!draggingRef.current) return;
+
+    draggingRef.current = false;
+
+    if (progressRef.current >= 95) {
+      updateProgress(100);
+      onConfirm();
+    } else {
+      // Reset if the user did not slide far enough.
+      updateProgress(0);
+    }
+  }
+
+  function handlePointerCancel() {
+    draggingRef.current = false;
+    updateProgress(0);
+  }
+
+  const confirmed = progress >= 100;
+
+  return (
+    <div className="w-full space-y-2">
+      <div
+        ref={railRef}
+        className={`relative h-14 overflow-hidden rounded-full border transition-colors ${
+          confirmed ? "border-red-300 bg-red-50" : "border-stone-300 bg-stone-100"
+        } ${disabled ? "opacity-50" : ""}`}
+      >
+        {/* Centered instruction */}
+        <span
+          className={`pointer-events-none absolute inset-0 grid place-items-center px-14 text-center text-xs font-bold uppercase tracking-[0.12em] transition-opacity ${
+            confirmed ? "text-red-700" : "text-stone-500"
+          }`}
+        >
+          {confirmed ? "Confirmed" : progress > 10 ? "Keep sliding..." : "Slide to delete"}
+        </span>
+
+        {/* Draggable handle */}
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label="Slide to confirm bill deletion"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress)}
+          className={`absolute top-1 grid h-12 w-12 place-items-center rounded-full border shadow-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 ${
+            draggingRef.current ? "cursor-grabbing" : "cursor-grab"
+          } ${confirmed ? "border-red-600 bg-red-600 text-white" : "border-white bg-white text-red-700"}`}
+          style={{
+            left: `${4 + (progress / 100) * maxTravel}px`,
+            touchAction: "none",
+            transition: draggingRef.current ? "none" : "left 180ms ease",
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
+        >
+          {confirmed ? (
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m5 12 4 4L19 6" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M5 12h13M13 6l6 6-6 6" />
+            </svg>
+          )}
+        </button>
+      </div>
+
+      <p className="text-center text-xs text-stone-500">
+        Irreversible action · Slide the handle fully to delete
+      </p>
+    </div>
+  );
+}
+
 function BillView() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -66,10 +217,13 @@ function BillView() {
   const [busy, setBusy] = useState<"" | "wa" | "save" | "share">("");
   const [msg, setMsg] = useState<Msg>(null);
   const [editing, setEditing] = useState(false);
+  const [slideKey, setSlideKey] = useState(0); // bump to reset the slide handle after a failed delete
 
   const apply = useCallback((r: State | null) => (r ? setD(r) : setMissing(true)), []);
   const load = useCallback(async () => apply(await fetchBill(id)), [id, apply]);
-  useEffect(() => { fetchBill(id).then(apply); }, [id, apply]);
+  useEffect(() => {
+    fetchBill(id).then(apply);
+  }, [id, apply]);
 
   if (missing) return <p className="p-6 text-center">Bill not found.</p>;
   if (!d) return <Loading />;
@@ -96,7 +250,8 @@ function BillView() {
     lossy ? " Some characters (e.g. Sinhala/Tamil) can’t be drawn in the PDF – use Print for those." : "";
 
   async function savePdf() {
-    setBusy("save"); setMsg(null);
+    setBusy("save");
+    setMsg(null);
     try {
       const { blob, fileName, lossy } = await makePdf();
       saveBlob(blob, fileName);
@@ -109,7 +264,8 @@ function BillView() {
 
   /** Saves the PDF to the phone, then opens THIS customer's WhatsApp chat. */
   async function sendWhatsApp() {
-    setBusy("wa"); setMsg(null);
+    setBusy("wa");
+    setMsg(null);
     try {
       const { blob, fileName, lossy } = await makePdf();
       saveBlob(blob, fileName);
@@ -123,7 +279,7 @@ function BillView() {
       if (!w) window.location.assign(link);
       setMsg({
         type: "ok",
-        text: `PDF saved to Downloads. In the WhatsApp chat tap  📎  →  Document  →  “${fileName}”.${lossyNote(lossy)}`,
+        text: `Saved “${fileName}” to your Downloads folder.${lossyNote(lossy)}\n\nNow opening WhatsApp…`,
       });
     } catch {
       setMsg({ type: "err", text: "Could not create the PDF. Please try again." });
@@ -133,7 +289,8 @@ function BillView() {
 
   /** Share sheet with the real PDF attached (choose WhatsApp, then the contact). */
   async function sharePdf() {
-    setBusy("share"); setMsg(null);
+    setBusy("share");
+    setMsg(null);
     try {
       const { blob, fileName, lossy } = await makePdf();
       const file = new File([blob], fileName, { type: "application/pdf" });
@@ -141,7 +298,10 @@ function BillView() {
         await navigator.share({ files: [file], title: `Invoice ${no}`, text: `Invoice ${no} – ${brandName}` });
       } else {
         saveBlob(blob, fileName);
-        setMsg({ type: "ok", text: `Sharing files isn’t supported here, so “${fileName}” was saved to Downloads.${lossyNote(lossy)}` });
+        setMsg({
+          type: "ok",
+          text: `Sharing files isn’t supported here, so “${fileName}” was saved to Downloads.${lossyNote(lossy)}`,
+        });
       }
     } catch (e) {
       if ((e as { name?: string })?.name !== "AbortError") {
@@ -158,84 +318,57 @@ function BillView() {
     document.title = old;
   }
 
+  /**
+   * Deletes this bill AND its payments.
+   * 1. Remove every payment that belongs to this bill (payments.bill_id = b.id).
+   * 2. Remove the bill.
+   * 3. Navigate back to the home page.
+   * If anything fails, the slider is reset so the user can retry.
+   */
   async function del() {
+    // 1. Delete the bill's payments first.
     if (billPays.length > 0) {
-      return alert("This bill has payments. Delete its payments first, then delete the bill.");
+      const { error: payErr } = await supabase
+        .from("payments")
+        .delete()
+        .eq("bill_id", b.id);
+      if (payErr) {
+        setMsg({ type: "err", text: `Could not delete payments: ${payErr.message}` });
+        setSlideKey((k) => k + 1);
+        return;
+      }
     }
-    if (!confirm("Delete this bill?")) return;
+
+    // 2. Delete the bill.
     const { error } = await supabase.from("bills").delete().eq("id", b.id);
-    if (error) return alert(error.message);
+    if (error) {
+      setMsg({ type: "err", text: error.message });
+      setSlideKey((k) => k + 1);
+      return;
+    }
+
+    // 3. Navigate away (the page is gone).
     router.push("/");
   }
 
-  const invoice = <Invoice bill={b} customer={c} items={items} pays={billPays} outstanding={outstanding} />;
+  const invoice = (
+    <Invoice bill={b} customer={c} items={items} pays={billPays} outstanding={outstanding} />
+  );
 
   return (
     <div className="mx-auto w-full max-w-[210mm] print:max-w-none">
       <div className="print:hidden">
-        {/* summary */}
-        <section className={`${card} !mb-3`}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className={eyebrow}>Invoice</p>
-              <h1 className="mt-0.5 break-all text-lg font-bold leading-snug text-ink">{no}</h1>
-              <p className="mt-0.5 truncate text-sm text-stone-600">{c.name}</p>
-              <p className={muted}>{b.bill_date}</p>
-            </div>
-            <span className={`${status.cls} shrink-0`}>{status.label}</span>
-          </div>
-          <div className="mt-3 grid grid-cols-3 divide-x divide-stone-200 rounded-xl bg-stone-50 py-2.5 text-center ring-1 ring-stone-200">
-            <div className="px-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Total</p>
-              <p className="mt-0.5 text-[13px] font-bold tabular-nums text-ink sm:text-sm">{money(b.total)}</p>
-            </div>
-            <div className="px-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Paid</p>
-              <p className="mt-0.5 text-[13px] font-bold tabular-nums text-emerald-700 sm:text-sm">{money(received)}</p>
-            </div>
-            <div className="px-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Balance</p>
-              <p className={`mt-0.5 text-[13px] font-bold tabular-nums sm:text-sm ${billBalance > 0.004 ? "text-red-700" : "text-emerald-700"}`}>
-                {money(billBalance)}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* actions */}
-        <section className="mb-3 space-y-2">
-          <button className={`${btn("wa")} w-full !min-h-12 text-base`} onClick={sendWhatsApp} disabled={!!busy}>
-            {busy === "wa" ? "Preparing PDF…" : "Send on WhatsApp"}
-          </button>
-          <div className="grid grid-cols-3 gap-2">
-            <button className={btn("ghost")} onClick={savePdf} disabled={!!busy}>{busy === "save" ? "Saving…" : "Save PDF"}</button>
-            <button className={btn("ghost")} onClick={sharePdf} disabled={!!busy}>{busy === "share" ? "…" : "Share PDF"}</button>
-            <button className={btn("ghost")} onClick={printPdf} disabled={!!busy}>Print</button>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <button className={btn("ghost", "sm")} onClick={() => setEditing((v) => !v)}>{editing ? "Close edit" : "Edit customer"}</button>
-            <Link className={btn("ghost", "sm")} href={`/customers/${c.id}`}>Customer</Link>
-            <button className={`${btn("ghost", "sm")} !text-red-700`} onClick={del}>Delete bill</button>
-          </div>
-          {msg && (
-            <p
-              role="status"
-              className={`rounded-xl px-3.5 py-2.5 text-sm font-medium ${
-                msg.type === "ok" ? "border border-emerald-200 bg-emerald-50 text-emerald-800" : "border border-red-200 bg-red-50 text-red-700"
-              }`}
-            >
-              {msg.text}
-            </p>
-          )}
-        </section>
-
         {editing && (
           <section className={card}>
             <h3 className={h3}>Edit customer</h3>
             <CustomerEdit
               customer={c}
               onCancel={() => setEditing(false)}
-              onSaved={() => { setEditing(false); setMsg({ type: "ok", text: "Customer details updated." }); load(); }}
+              onSaved={() => {
+                setEditing(false);
+                setMsg({ type: "ok", text: "Customer details updated." });
+                load();
+              }}
             />
           </section>
         )}
@@ -256,6 +389,51 @@ function BillView() {
             maxAmount={Math.max(0, billBalance - pending)}
             onSaved={load}
           />
+        </section>
+
+        <section className="mb-3 space-y-2">
+          <button
+            className={`${btn("wa")} w-full !min-h-12 text-base`}
+            onClick={sendWhatsApp}
+            disabled={!!busy}
+          >
+            {busy === "wa" ? "Preparing PDF…" : "Send on WhatsApp"}
+          </button>
+          <div className="grid grid-cols-3 gap-2">
+            <button className={btn("ghost")} onClick={savePdf} disabled={!!busy}>
+              {busy === "save" ? "Saving…" : "Save PDF"}
+            </button>
+            <button className={btn("ghost")} onClick={sharePdf} disabled={!!busy}>
+              {busy === "share" ? "…" : "Share PDF"}
+            </button>
+            <Link className={btn("ghost", "sm")} href={`/customers/${c.id}`}>
+              Customer
+            </Link>
+          </div>
+
+          {/* Slide-to-delete (replaces the old Delete button) */}
+          <div className="pt-2">
+            <SlideToDelete
+              key={slideKey}
+              onConfirm={() => {
+                void del();
+              }}
+              disabled={!!busy}
+            />
+          </div>
+
+          {msg && (
+            <p
+              role="status"
+              className={`rounded-xl px-3.5 py-2.5 text-sm font-medium ${
+                msg.type === "ok"
+                  ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border border-red-200 bg-red-50 text-red-700"
+              }`}
+            >
+              {msg.text}
+            </p>
+          )}
         </section>
       </div>
 

@@ -3,7 +3,7 @@ export const SHOP = {
   name: "Gopal Picture Palace",
   mark: "™", // trademark symbol shown after the name
   address: "Kurunegala",
-  phone: "07X XXX XXXX",
+  phone: "077 672 9169",
   website: "https://gpp-site.vercel.app",
   logo: "/logo.png", // full logo (GPP + lotus + name)
   logoMark: "/logo-mark.png", // GPP monogram only (header)
@@ -28,16 +28,14 @@ export const money = (n: number | string | null | undefined) => "Rs. " + fmt(n);
 export const billNo = (b: { id: number; invoice_no?: string | null }) =>
   b.invoice_no || `GPP-${String(b.id).padStart(5, "0")}`;
 
-/** Base invoice number = bill date + customer name  ->  20261026-RAJA-GOPAL */
+/** Base invoice number = INV + bill date + customer name -> INV20261027AKSHEIKUMAR */
 export function invoiceNoBase(date: string, customerName: string) {
   const ymd = date.replace(/-/g, "");
   const slug = customerName
     .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 16)
-    .replace(/-+$/, "");
-  return `${ymd}-${slug || "CUSTOMER"}`;
+    .replace(/[^A-Z0-9]/g, "") // Removes spaces, dashes, and special characters
+    .slice(0, 16);
+  return `INV${ymd}${slug || "CUSTOMER"}`;
 }
 
 /** If the same customer already has a bill that day, add -2, -3 … */
