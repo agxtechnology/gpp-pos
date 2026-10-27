@@ -161,9 +161,6 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   
   // Clickable tel:
   textWithLink(`Tel: ${SHOP.phone}`, M + colWidth, fy, `tel:${SHOP.phone.replace(/\s/g, '')}`);
-  fy += 4;
-  // Clickable web:
-  textWithLink(`${websiteLabel}`, M + colWidth, fy, SHOP.website);
 
   // Invoice Details
   font("bold", 7, C.mute);
@@ -187,15 +184,10 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   dy += 5;
 
   // Status
-  font("normal", 8.5, C.text);
+    font("normal", 8.5, C.text);
   doc.text("Status :", M + colWidth * 2, dy);
-  font("bold", 7, status.fg);
-  const stW = doc.getTextWidth(status.label) + 0.4 * status.label.length + 7;
-  fill(status.bg);
-  doc.roundedRect(M + colWidth * 2 + 15, dy - 3.5, stW, 5.4, 2.7, 2.7, "F");
-  doc.setCharSpace(0.4);
-  doc.text(status.label, M + colWidth * 2 + 15 + stW / 2 + 0.2, dy, { align: "center" });
-  doc.setCharSpace(0);
+  font("bold", 8.5, status.fg);
+  doc.text(t(status.label), M + colWidth * 2 + 15, dy);
 
   y += 32;
 
@@ -236,8 +228,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
     doc.line(M, y + rowH, R, y + rowH);
     y += rowH;
   });
-  font("normal", 7, C.mute);
-  doc.text("Amounts in Sri Lankan Rupees (Rs.)", R, y + 4.5, { align: "right" });
+  
   y += 12;
 
   // ---------- payment details + totals ----------
