@@ -13,6 +13,7 @@ export type Bill = {
   total: number;
   notes: string | null;
   invoice_no: string | null;
+  previous_balance: number | null;
 };
 
 export type BillItem = {

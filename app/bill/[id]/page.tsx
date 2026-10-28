@@ -239,6 +239,11 @@ function BillView() {
   const outstanding =
     sum(bills, (x) => x.total) - sum(pays.filter((p) => p.status === "received"), (p) => p.amount);
   const status = billStatusUi[billStatus(Number(b.total), received, pending)];
+    // old balance (saved on the bill when it was created) + thiCurrent Bill's balance
+  const previous = Number(b.previous_balance ?? 0);
+  const payable = billBalance + previous;
+  const customerPending = sum(pays.filter((p) => p.status === "pending"), (p) => p.amount);
+  const maxPay = Math.max(0, Math.min(payable - pending, outstanding - customerPending));
 
   // ---------- PDF (created on this device – nothing is uploaded) ----------
   async function makePdf() {
@@ -272,7 +277,9 @@ function BillView() {
       const text =
         `Hello ${c.name}, thank you for shopping at ${brandName}.\n` +
         `Your invoice ${no} (PDF) is attached.\n` +
-        `Total: ${money(b.total)} · Balance due: ${money(billBalance)}`;
+        `Current Bill: ${money(b.total)}` +
+        (previous > 0.004 ? ` · Previous Balance: ${money(previous)}` : "") +
+        `\nTotal Due: ${money(payable)}`;
       const link = waLink(c.phone, text) ?? `https://wa.me/?text=${encodeURIComponent(text)}`;
       await new Promise((r) => setTimeout(r, 500)); // let the download start first
       const w = window.open(link, "_blank");
@@ -380,13 +387,13 @@ function BillView() {
 
         {/* payments */}
         <section className={card}>
-          <h3 className={h3}>Payments for this bill</h3>
+          <h3 className={h3}>Payments for Current Bill</h3>
           <PaymentList payments={billPays} onChange={load} />
           <h3 className={`${h3} mt-5`}>Add payment</h3>
           <PaymentForm
             customerId={c.id}
             billId={b.id}
-            maxAmount={Math.max(0, billBalance - pending)}
+            maxAmount={maxPay}
             onSaved={load}
           />
         </section>

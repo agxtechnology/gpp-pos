@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type { Balance, Bill, Customer, Payment } from "./types";
+import { round2 } from "./num";
 
 export type AllData = {
   customers: Customer[];
@@ -64,4 +65,17 @@ export function paidByBill(payments: Payment[]) {
     if (p.status === "pending") o.pending += Number(p.amount);
   });
   return out;
+}
+
+export async function customerBalance(customerId: number): Promise<number> {
+  const [b, p] = await Promise.all([
+    supabase.from("bills").select("total").eq("customer_id", customerId),
+    supabase.from("payments").select("amount,status").eq("customer_id", customerId),
+  ]);
+  const billed = sum((b.data ?? []) as { total: number }[], (x) => x.total);
+  const paid = sum(
+    ((p.data ?? []) as { amount: number; status: string }[]).filter((x) => x.status === "received"),
+    (x) => x.amount
+  );
+  return Math.max(0, round2(billed - paid));
 }

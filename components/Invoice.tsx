@@ -25,7 +25,11 @@ export default function Invoice({
   const pending = sum(pays.filter((p) => p.status === "pending"), (p) => p.amount);
   const balance = Number(bill.total) - received;
   const status = billStatusUi[billStatus(Number(bill.total), received, pending)];
-  const showOutstanding = Math.abs(outstanding - balance) > 0.004;
+  const hasSnapshot = bill.previous_balance != null;
+  const previous = Number(bill.previous_balance ?? 0);
+  const showPrevious = previous > 0.004;
+  const payable = balance + previous;
+  const showOutstanding = !hasSnapshot && Math.abs(outstanding - balance) > 0.004;
 
   const th = "px-2 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] sm:px-4";
   const td = "px-2 py-3 align-top text-[13px] sm:px-4 sm:text-sm";
@@ -172,13 +176,19 @@ export default function Invoice({
             {bill.notes && <p className="mt-3 text-xs text-stone-500">Note: {bill.notes}</p>}
           </div>
 
-          <div className="text-sm [&>div]:flex [&>div]:justify-between [&>div]:gap-3 [&>div]:py-1.5 [&>div>b]:tabular-nums">
+                    <div className="text-sm [&>div]:flex [&>div]:justify-between [&>div]:gap-3 [&>div]:py-1.5 [&>div>b]:tabular-nums">
             <div>
-              <span className="text-stone-500">Total</span>
+              <span className="text-stone-500">{showPrevious ? "Current Bill" : "Total"}</span>
               <b className="text-ink">{money(bill.total)}</b>
             </div>
+            {showPrevious && (
+              <div>
+                <span className="font-medium text-amber-700">Previous Balance</span>
+                <b className="text-amber-700">{money(previous)}</b>
+              </div>
+            )}
             <div>
-              <span className="text-stone-500">Paid</span>
+              <span className="text-stone-500">Amount Paid</span>
               <b className="text-ink">{money(received)}</b>
             </div>
             {pending > 0 && (
@@ -188,8 +198,10 @@ export default function Invoice({
               </div>
             )}
             <div className="!mt-2 !items-center !rounded-lg !bg-brand !px-4 !py-3 text-white">
-              <span className="text-xs font-semibold uppercase tracking-wider">Balance due</span>
-              <b className="text-base">{money(balance)}</b>
+              <span className="text-xs font-semibold uppercase tracking-wider">
+                {showPrevious ? "Total Due" : "Balance due"}
+              </span>
+              <b className="text-base">{money(payable)}</b>
             </div>
             {showOutstanding && (
               <div className="!text-xs text-stone-500">

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { money, invoiceNoBase, nextInvoiceNo } from "../../lib/shop";
 import { isValidPhone, num, round2 } from "../../lib/num";
+import { customerBalance } from "../../lib/data";
 import { localDate, useToday } from "../../lib/useToday";
 import type { Customer, Payment } from "../../lib/types";
 import { NumInput, PhoneInput, Seg } from "../../components/Fields";
@@ -43,6 +44,16 @@ export default function NewBill() {
   }, []);
 
   const total = useMemo(() => round2(items.reduce((s, i) => s + lineAmt(i), 0)), [items]);
+
+  // old balance of the selected customer (added to this invoice)
+  const [prev, setPrev] = useState<{ id: number; value: number } | null>(null);
+  useEffect(() => {
+    if (!cust.id) return;
+    const id = cust.id;
+    customerBalance(id).then((value) => setPrev({ id, value }));
+  }, [cust.id]);
+  const previous = cust.id && prev?.id === cust.id ? prev.value : 0;
+  const payable = round2(total + previous);
 
   const q = cust.name.trim().toLowerCase();
   const matches =
@@ -85,8 +96,8 @@ export default function NewBill() {
     const payAmt = round2(num(pay.amount));
     if (pay.method !== "later") {
       if (payAmt <= 0) return setErr("Enter the amount paid, or choose “Pay later”.");
-      if (payAmt > billTotal + 0.004)
-        return setErr(`Payment is more than the bill total (${money(billTotal)}).`);
+      if (payAmt > billTotal + previous + 0.004)
+        return setErr(`Payment is more than the total due (${money(billTotal + previous)}).`);
       if (pay.method === "cheque") {
         if (!pay.cheque_no.trim()) return setErr("Enter the cheque number.");
         if (!pay.cheque_date) return setErr("Enter the cheque date.");
@@ -104,7 +115,9 @@ export default function NewBill() {
       }
       const phone = cust.phone.trim();
       const address = cust.address.trim();
+      let previousNow = 0; // what this customer owed BEFORE this bill
       if (cid) {
+        previousNow = await customerBalance(cid);
         const patch = { ...(phone && { phone }), ...(address && { address }) };
         if (Object.keys(patch).length) {
           const { error } = await supabase.from("customers").update(patch).eq("id", cid);
@@ -120,6 +133,9 @@ export default function NewBill() {
         cid = (data as Customer).id;
       }
 
+      if (pay.method !== "later" && payAmt > billTotal + previousNow + 0.004)
+        throw new Error(`Payment is more than the total due (${money(billTotal + previousNow)}).`);
+
       const billDate = date || localDate();
       const base = invoiceNoBase(billDate, name);
       const { data: same } = await supabase.from("bills").select("invoice_no").like("invoice_no", `${base}%`);
@@ -127,7 +143,7 @@ export default function NewBill() {
 
       const { data: bill, error: be } = await supabase
         .from("bills")
-        .insert({ customer_id: cid, bill_date: billDate, total: billTotal, notes: notes.trim() || null, invoice_no })
+        .insert({ customer_id: cid, bill_date: billDate, total: billTotal, notes: notes.trim() || null, invoice_no, previous_balance: previousNow })
         .select()
         .single();
       if (be) throw be;
@@ -201,6 +217,12 @@ export default function NewBill() {
 
         <label className={label}>Address</label>
         <input className={inp} value={cust.address} onChange={(e) => setCust({ ...cust, address: e.target.value })} placeholder="Customer address (optional)" />
+
+        {cust.id && previous > 0.004 && (
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm font-medium text-amber-800">
+            Previous Balance <b>{money(previous)}</b> will be added to this invoice.
+          </p>
+        )}
       </section>
 
       {/* 2 · items */}
@@ -257,13 +279,20 @@ export default function NewBill() {
 
         {pay.method !== "later" && (
           <>
-            <label className={label}>Amount paid (Rs.)</label>
+            <label className={label}>Amount Paid (Rs.)</label>
             <NumInput placeholder="0.00" value={pay.amount} onChange={(v) => setPay({ ...pay, amount: v })} />
-            <button type="button" className="mt-2 text-sm font-semibold text-brand" onClick={() => setPay({ ...pay, amount: total.toFixed(2) })}>
-              Full amount: {money(total)}
-            </button>
-            {num(pay.amount) > 0 && num(pay.amount) < total && (
-              <p className={`${muted} mt-1`}>Balance left on this bill: {money(total - num(pay.amount))}</p>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              <button type="button" className="text-sm font-semibold text-brand" onClick={() => setPay({ ...pay, amount: total.toFixed(2) })}>
+                Current Bill: {money(total)}
+              </button>
+              {previous > 0.004 && (
+                <button type="button" className="text-sm font-semibold text-brand" onClick={() => setPay({ ...pay, amount: payable.toFixed(2) })}>
+                  Bill + old balance: {money(payable)}
+                </button>
+              )}
+            </div>
+            {num(pay.amount) > 0 && num(pay.amount) < payable && (
+              <p className={`${muted} mt-1`}>Balance left after this payment: {money(payable - num(pay.amount))}</p>
             )}
           </>
         )}
@@ -299,8 +328,13 @@ export default function NewBill() {
         {err && <p className={`${errBox} mb-2`}>{err}</p>}
         <div className="flex items-center gap-3">
           <div className="leading-tight">
-            <span className="block text-xs font-medium uppercase tracking-wide text-stone-500">Total</span>
-            <b className="text-xl text-brand">{money(total)}</b>
+            <span className="block text-xs font-medium uppercase tracking-wide text-stone-500">
+              {previous > 0.004 ? "Total Due" : "Total"}
+            </span>
+            <b className="text-xl text-brand">{money(payable)}</b>
+            {previous > 0.004 && (
+              <span className="block text-[11px] text-stone-500">Bill {money(total)} + old {money(previous)}</span>
+            )}
           </div>
           <button className={`${btn()} ml-auto !min-h-12 flex-1 text-base sm:max-w-xs`} disabled={busy}>
             {busy ? "Saving…" : "Save & create e-bill"}

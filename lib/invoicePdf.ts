@@ -70,7 +70,11 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   const pending = sum(pays.filter((p) => p.status === "pending"), (p) => p.amount);
   const balance = Number(bill.total) - received;
   const status = STATUS[billStatus(Number(bill.total), received, pending)];
-  const showOutstanding = Math.abs(outstanding - balance) > 0.004;
+  const hasSnapshot = bill.previous_balance != null;
+  const previous = Number(bill.previous_balance ?? 0);
+  const showPrevious = previous > 0.004;
+  const payable = balance + previous;
+  const showOutstanding = !hasSnapshot && Math.abs(outstanding - balance) > 0.004;
 
   const W = 210, H = 297, M = 14, CW = 182, R = M + CW;
   const FOOT = 11;
@@ -98,7 +102,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   const textWithLink = (text: string, x: number, y: number, url: string) => {
     doc.textWithLink(t(text), x, y, { url });
   };
-  
+
   const frameTop = () => {
     fill(C.brand);
     doc.rect(0, 0, W, 1.6, "F");
@@ -107,7 +111,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   // ---------- page 1 header ----------
   frameTop();
   let y = 15.6;
-  
+
   // Logo
   const logoW = 50;
   const logoH = logo ? (logoW * logo.h) / logo.w : 25;
@@ -117,8 +121,8 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   font("normal", 24, C.brand);
   spaced("INVOICE", R, y + logoH - 6, 2.2, "right");
 
-  y += Math.max(logoH, 25) + 8; 
-  
+  y += Math.max(logoH, 25) + 8;
+
   // Divider line
   stroke(C.line);
   doc.setLineWidth(0.3);
@@ -127,7 +131,7 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
 
   // ---------- 3 Info Columns ----------
   const colWidth = CW / 3;
-  
+
   // Bill To
   font("bold", 7, C.mute);
   spaced("BILL TO", M, y, 0.45);
@@ -158,19 +162,22 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   const fromLines = doc.splitTextToSize(t(`Address: ${SHOP.address}`), colWidth - 4);
   doc.text(fromLines, M + colWidth, fy);
   fy += fromLines.length * 4;
-  
+
   // Clickable tel:
   textWithLink(`Tel: ${SHOP.phone}`, M + colWidth, fy, `tel:${SHOP.phone.replace(/\s/g, '')}`);
+  // fy += 4;
+  // // Clickable web:
+  // textWithLink(`${websiteLabel}`, M + colWidth, fy, SHOP.website);
 
   // Invoice Details
   font("bold", 7, C.mute);
   spaced("INVOICE DETAILS", M + colWidth * 2, y, 0.45);
   let dy = y + 5;
-  
+
   // Invoice No
   font("normal", 8.5, C.text);
   doc.text("Invoice No :", M + colWidth * 2, dy);
-  font("bold", 7.5, C.ink); 
+  font("bold", 7.5, C.ink);
   const invNoWidth = doc.getTextWidth(t(billNo(bill)));
   doc.text(t(billNo(bill)), R - invNoWidth, dy);
   dy += 5;
@@ -184,8 +191,11 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
   dy += 5;
 
   // Status
-    font("normal", 8.5, C.text);
+  // Status — Plain text (no background pill)
+  font("normal", 8.5, C.text);
   doc.text("Status :", M + colWidth * 2, dy);
+  font("bold", 8.5, status.fg);
+  doc.text(t(status.label), M + colWidth * 2 + 15, dy);
   font("bold", 8.5, status.fg);
   doc.text(t(status.label), M + colWidth * 2 + 15, dy);
 
@@ -228,21 +238,21 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
     doc.line(M, y + rowH, R, y + rowH);
     y += rowH;
   });
-  
+  // font("normal", 7, C.mute);
+  // // doc.text("Amounts in Sri Lankan Rupees (Rs.)", R, y + 4.5, { align: "right" });
   y += 12;
 
   // ---------- payment details + totals ----------
   const LEFT_W = 100;
   const X0 = R - 72;
   const payRows = pays.map((p) => {
-    const left = `${p.method.charAt(0).toUpperCase()}${p.method.slice(1)}${p.cheque_no ? ` #${p.cheque_no}` : ""}${
-      p.cheque_date ? ` (${p.cheque_date})` : ""
-    }`;
+    const left = `${p.method.charAt(0).toUpperCase()}${p.method.slice(1)}${p.cheque_no ? ` #${p.cheque_no}` : ""}${p.cheque_date ? ` (${p.cheque_date})` : ""
+      }`;
     return { left: t(left), status: t(`- ${p.status}`), amount: t(fmt(p.amount)) };
   });
   const noteLines = bill.notes ? (doc.splitTextToSize(t(`Note: ${bill.notes}`), LEFT_W) as string[]) : [];
   const leftH = 8 + Math.max(1, payRows.length) * 6.4 + (noteLines.length ? noteLines.length * 4 + 4 : 0);
-  const rightH = 8 + (pending > 0 ? 21 : 14) + 14 + (showOutstanding ? 8 : 0);
+  const rightH = 8 + (pending > 0 ? 21 : 14) + (showPrevious ? 7 : 0) + 14 + (showOutstanding ? 8 : 0);
   if (y + Math.max(leftH, rightH) > LIMIT) {
     doc.addPage();
     frameTop();
@@ -283,16 +293,22 @@ export async function buildInvoicePdf(inp: InvoicePdfInput) {
     doc.text(t(value), R, ry, { align: "right" });
     ry += 7;
   };
-  totalRow("Total", money(bill.total));
-  totalRow("Paid", money(received));
+  totalRow(showPrevious ? "Current Bill" : "Total", money(bill.total));
+  if (showPrevious) {
+    font("bold", 9, [180, 83, 9]);
+    doc.text("Previous Balance", X0, ry);
+    doc.text(t(money(previous)), R, ry, { align: "right" });
+    ry += 7;
+  }
+  totalRow("Amount Paid", money(received));
   if (pending > 0) totalRow("Cheque pending", money(pending));
   ry += 0.5;
   fill(C.brand);
   doc.roundedRect(X0, ry - 5, 72, 11.5, 1.8, 1.8, "F");
   font("bold", 7.5, C.white);
-  spaced("BALANCE DUE", X0 + 4, ry + 1.6, 0.4);
+  spaced(showPrevious ? "TOTAL DUE" : "BALANCE DUE", X0 + 4, ry + 1.6, 0.4);
   font("bold", 10.5, C.white);
-  doc.text(t(money(balance)), R - 4, ry + 1.9, { align: "right" });
+  doc.text(t(money(payable)), R - 4, ry + 1.9, { align: "right" });
   ry += 12;
   if (showOutstanding) {
     font("normal", 8, C.mute);
