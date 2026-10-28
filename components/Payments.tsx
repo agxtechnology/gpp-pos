@@ -4,18 +4,14 @@ import { supabase } from "../lib/supabase";
 import { money } from "../lib/shop";
 import { num, round2 } from "../lib/num";
 import { useToday } from "../lib/useToday";
-import type { Customer, Payment } from "../lib/types";
+import type { Customer, Payment, Bill } from "../lib/types";
 import { NumInput, Seg } from "./Fields";
 import { btn, inp, label, muted, badge, errBox } from "./ui";
+import { PaymentReceipt } from "./PaymentReceipt";
 
 type Method = Payment["method"];
-
 const EMPTY = { amount: "", method: "cash" as Method, cheque_no: "", cheque_date: "", note: "" };
 
-/**
- * maxAmount = the most that can still be collected (balance − pending cheques).
- * Stops over-payments, and cheques must have a number + date.
- */
 export function PaymentForm({
   customerId,
   billId = null,
@@ -123,18 +119,26 @@ export function PaymentList({
   payments,
   customers,
   onChange,
+  balance = 0,
+  customer,
+  bill,
 }: {
   payments: Payment[];
   customers?: Record<number, Customer>;
   onChange?: () => void;
+  balance?: number;
+  customer?: Customer;
+  bill?: Bill | null;
 }) {
   const today = useToday();
+  const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null);
 
   async function setStatus(id: number, status: Payment["status"]) {
     const { error } = await supabase.from("payments").update({ status }).eq("id", id);
     if (error) return alert(error.message);
     onChange?.();
   }
+  
   async function del(id: number) {
     if (!confirm("Delete this payment?")) return;
     const { error } = await supabase.from("payments").delete().eq("id", id);
@@ -145,39 +149,63 @@ export function PaymentList({
   if (!payments.length) return <p className={muted}>No payments yet.</p>;
 
   return (
-    <div>
-      {payments.map((p) => {
-        const depositNow = p.status === "pending" && !!p.cheque_date && !!today && p.cheque_date <= today;
-        return (
-          <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 py-3 last:border-0">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <b className="text-base">{money(p.amount)}</b>
-                <span className={badge[p.status]}>{p.status}</span>
-                {depositNow && <span className={badge.deposit}>Deposit now</span>}
+    <>
+      <div>
+        {payments.map((p) => {
+          const depositNow = p.status === "pending" && !!p.cheque_date && !!today && p.cheque_date <= today;
+          return (
+            <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 py-3 last:border-0">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <b className="text-base">{money(p.amount)}</b>
+                  <span className={badge[p.status]}>{p.status}</span>
+                  {depositNow && <span className={badge.deposit}>Deposit now</span>}
+                </div>
+                <div className={`${muted} mt-0.5`}>
+                  <span className="capitalize">{p.method}</span>
+                  {p.cheque_no ? ` #${p.cheque_no}` : ""}
+                  {p.cheque_date ? ` · cheque date ${p.cheque_date}` : ""}
+                  {" · "}
+                  {String(p.paid_at).slice(0, 10)}
+                  {customers?.[p.customer_id] ? ` · ${customers[p.customer_id].name}` : ""}
+                  {p.note ? ` · ${p.note}` : ""}
+                </div>
               </div>
-              <div className={`${muted} mt-0.5`}>
-                <span className="capitalize">{p.method}</span>
-                {p.cheque_no ? ` #${p.cheque_no}` : ""}
-                {p.cheque_date ? ` · cheque date ${p.cheque_date}` : ""}
-                {" · "}
-                {String(p.paid_at).slice(0, 10)}
-                {customers?.[p.customer_id] ? ` · ${customers[p.customer_id].name}` : ""}
-                {p.note ? ` · ${p.note}` : ""}
+              
+              <div className="flex items-center gap-1.5 print:hidden">
+                {/* Receipt Button (only shows if customer is passed) */}
+                {customer && (
+                  <button 
+                    className={`${btn("ghost", "sm")} !text-brand`} 
+                    onClick={() => setReceiptPayment(p)}
+                  >
+                    Receipt
+                  </button>
+                )}
+
+                {p.status === "pending" && (
+                  <>
+                    <button className={btn("green", "sm")} onClick={() => setStatus(p.id, "received")}>Cleared</button>
+                    <button className={btn("red", "sm")} onClick={() => setStatus(p.id, "returned")}>Returned</button>
+                  </>
+                )}
+                <button className={btn("ghost", "sm")} aria-label="Delete payment" onClick={() => del(p.id)}>✕</button>
               </div>
             </div>
-            <div className="flex gap-1.5 print:hidden">
-              {p.status === "pending" && (
-                <>
-                  <button className={btn("green", "sm")} onClick={() => setStatus(p.id, "received")}>Cleared</button>
-                  <button className={btn("red", "sm")} onClick={() => setStatus(p.id, "returned")}>Returned</button>
-                </>
-              )}
-              <button className={btn("ghost", "sm")} aria-label="Delete payment" onClick={() => del(p.id)}>✕</button>
-            </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+
+      {/* Show Receipt Modal */}
+      {receiptPayment && customer && (
+        <PaymentReceipt
+          payment={receiptPayment}
+          customer={customer}
+          bill={bill}
+          balance={balance}
+          onClose={() => setReceiptPayment(null)}
+        />
+      )}
+    </>
   );
 }

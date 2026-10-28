@@ -109,7 +109,7 @@ function CustomerView() {
 
       <div className={card}>
         <h3 className={h3}>Payments</h3>
-        <PaymentList payments={d.pays} onChange={load} />
+        <PaymentList payments={d.pays} onChange={load} balance={balance} customer={d.c}    />
       </div>
 
       <div className={card}>
