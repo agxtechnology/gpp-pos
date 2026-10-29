@@ -1,15 +1,14 @@
-import { SHOP, brandName, money, fmt } from "./shop";
+import { SHOP, brandName, fmt } from "./shop";
 import type { Payment, Customer, Bill } from "./types";
 
 type RGB = readonly [number, number, number];
 const C = {
   brand: [44, 61, 87] as RGB,
-  gold: [156, 139, 94] as RGB,
   text: [68, 64, 60] as RGB,
   mute: [120, 113, 108] as RGB,
   line: [231, 229, 228] as RGB,
   green: [6, 95, 70] as RGB,
-  red: [153, 27, 27] as RGB, // <-- Added red for the balance
+  red: [153, 27, 27] as RGB,
   white: [255, 255, 255] as RGB,
 };
 
@@ -23,7 +22,7 @@ export async function buildReceiptPdf({
   payment: Payment;
   customer: Customer;
   bill?: Bill | null;
-  currentBalance: number;
+  currentBalance: number; // This is the NEW balance after this payment
   logo: { dataUrl: string; w: number; h: number } | null;
 }) {
   const { jsPDF } = await import("jspdf");
@@ -126,21 +125,36 @@ export async function buildReceiptPdf({
   
   y += 20;
 
-  // Totals Section (Now without the blue card)
+  // Totals Section (Ledger Style)
   const boxW = 90;
   const boxX = R - boxW;
-  
-  // Payment Status
-  font("normal", 10, C.mute);
-  doc.text("Payment Status:", boxX, y);
-  font("bold", 10, payment.status === "received" ? C.green : C.mute);
-  doc.text(payment.status.toUpperCase(), R, y, { align: "right" });
-  y += 8;
 
-  // Remaining Balance (Plain Red Text)
+  // Calculate Previous Balance
+  const previousBalance = currentBalance + payment.amount;
+
+  // 1. Previous Balance
   font("normal", 10, C.mute);
+  doc.text("Previous Balance:", boxX, y);
+  font("bold", 10, C.text);
+  doc.text(`Rs. ${fmt(previousBalance)}`, R, y, { align: "right" });
+  y += 6;
+
+  // 2. Paid Amount
+  font("normal", 10, C.mute);
+  doc.text("Amount Paid:", boxX, y);
+  font("bold", 10, C.green);
+  doc.text(`- Rs. ${fmt(payment.amount)}`, R, y, { align: "right" });
+  y += 4;
+
+  // Divider line
+  stroke(C.line);
+  doc.line(boxX, y, R, y);
+  y += 6;
+
+  // 3. Total Remaining Balance
+  font("bold", 10, C.text);
   doc.text("Total Remaining Balance:", boxX, y);
-  font("bold", 12, currentBalance > 0 ? C.red : C.green);
+  font("bold", 14, currentBalance > 0 ? C.red : C.green);
   doc.text(`Rs. ${fmt(currentBalance)}`, R, y, { align: "right" });
 
   y += 20;
