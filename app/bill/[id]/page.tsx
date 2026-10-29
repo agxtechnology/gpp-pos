@@ -388,7 +388,13 @@ function BillView() {
         {/* payments */}
         <section className={card}>
           <h3 className={h3}>Payments for Current Bill</h3>
-          <PaymentList payments={billPays} onChange={load} />
+          <PaymentList 
+            payments={billPays} 
+            onChange={load} 
+            balance={outstanding}  // <--- IMPORTANT: Use outstanding, not billBalance
+            customer={c} 
+            bill={b} 
+          />
           <h3 className={`${h3} mt-5`}>Add payment</h3>
           <PaymentForm
             customerId={c.id}
